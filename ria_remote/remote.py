@@ -198,14 +198,21 @@ class LocalIO(IOBase):
 
     def read_file(self, file_path):
 
-        with open(text_type(file_path), 'r') as f:
-            content = f.read()
+        try:
+            with open(text_type(file_path), 'r') as f:
+                content = f.read()
+        except Exception as e:
+            raise RemoteError(str(e))
+
         return content
 
     def write_file(self, file_path, content):
 
-        with open(text_type(file_path), 'w') as f:
-            f.write(content)
+        try:
+            with open(text_type(file_path), 'w') as f:
+                f.write(content)
+        except Exception as e:
+            raise RemoteError(str(e))
 
 
 class NoSTDINSSHConnection(object):
@@ -442,7 +449,7 @@ class RIARemote(SpecialRemote):
 
     def _local_io(self):
         """Are we doing local operations?"""
-        # let's not make this decision dependent on the existance
+        # let's not make this decision dependent on the existence
         # of a directory the matches the name of the configured
         # object tree base dir. Such a match could be pure
         # coincidence. Instead, let's do remote whenever there
@@ -478,21 +485,25 @@ class RIARemote(SpecialRemote):
         this sets the remote to read-only operation.
         """
 
-        dataset_tree_version_file = \
-            self.objtree_base_path / 'ria-layout-version'
-        object_tree_version_file = \
-            self.objtree_base_path / self.archive_id[:3] / self.archive_id[3:] / 'ria-layout-version'
+        # TODO: RF: creation routine should be importable without RIARemote instantiation
+
+        dsgit_dir, archive_path, dsobj_dir = self.get_layout_locations(self.objtree_base_path, self.archive_id, None)
+
+        dataset_tree_version_file = self.objtree_base_path / 'ria-layout-version'
+        object_tree_version_file = dsgit_dir / 'ria-layout-version'
 
         read_only_msg = "Setting remote to read-only usage in order to prevent damage by putting things into an " \
                         "unknown version of the target layout. You can overrule this by configuring " \
                         "'annex.ria-remote.<name>.force-write'."
 
-        # TODO: It might be faster to directly try to read it, parse the output to detect non-existence of the file
-        #       and act upon it, rather than having to separate remote calls executed for checking existence and then
-        #       read the content
+        remote_dataset_tree_version = remote_object_tree_version = None
 
         # 1. check dataset tree version
-        if not self.io.exists(dataset_tree_version_file):
+        try:
+            remote_dataset_tree_version = self.io.read_file(dataset_tree_version_file)
+        except RemoteError:
+            # For now assume that means the file doesn't exist.
+            # TODO: Do proper parsing of the error
             if not self.io.exists(dataset_tree_version_file.parent):
                 # we are first, just put our stamp on it
                 try:
@@ -509,17 +520,19 @@ class RIARemote(SpecialRemote):
                            "fix the structure on the remote end.")
                 self._set_read_only(read_only_msg)
 
-        else:
-            remote_dataset_tree_version = self.io.read_file(dataset_tree_version_file)
-            if remote_dataset_tree_version != self._dataset_tree_version:
-                # Note: In later versions, condition might change in order to deal with older versions
-                self._info("Remote dataset tree reports version {}. Supported version is {}. Consider upgrading "
-                           "git-annex-ria-remote or fix the structure on the remote end."
-                           "".format(remote_dataset_tree_version, self._dataset_tree_version))
-                self._set_read_only(read_only_msg)
+        if remote_dataset_tree_version and remote_dataset_tree_version != self._dataset_tree_version:
+            # Note: In later versions, condition might change in order to deal with older versions
+            self._info("Remote dataset tree reports version {}. Supported version is {}. Consider upgrading "
+                       "git-annex-ria-remote or fix the structure on the remote end."
+                       "".format(remote_dataset_tree_version, self._dataset_tree_version))
+            self._set_read_only(read_only_msg)
 
         # 2. check (annex) object tree version
-        if not self.io.exists(object_tree_version_file):
+        try:
+            remote_object_tree_version = self.io.read_file(object_tree_version_file)
+        except RemoteError:
+            # For now assume that means the file doesn't exist.
+            # TODO: Do proper parsing of the error
             if not self.io.exists(object_tree_version_file.parent):
                 # we are first, just put our stamp on it
                 try:
@@ -533,12 +546,11 @@ class RIARemote(SpecialRemote):
                 self._info("Remote doesn't report any dataset tree version. Consider upgrading git-annex-ria-remote or "
                            "fix the structure on the remote end.")
                 self._set_read_only(read_only_msg)
-        else:
-            remote_object_tree_version = self.io.read_file(object_tree_version_file)
-            if remote_object_tree_version != self._object_tree_version:
-                self._info("Remote object tree reports version {}. Supported version is {}. Consider upgrading "
-                           "git-annex-ria-remote.".format(remote_object_tree_version, self._object_tree_version))
-                self._set_read_only(read_only_msg)
+
+        if remote_object_tree_version and remote_object_tree_version != self._object_tree_version:
+            self._info("Remote object tree reports version {}. Supported version is {}. Consider upgrading "
+                       "git-annex-ria-remote.".format(remote_object_tree_version, self._object_tree_version))
+            self._set_read_only(read_only_msg)
 
     def prepare(self):
 
