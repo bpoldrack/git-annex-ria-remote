@@ -501,7 +501,9 @@ class RIARemote(SpecialRemote):
         # 1. check dataset tree version
         try:
             remote_dataset_tree_version = self.io.read_file(dataset_tree_version_file)
-        except RemoteError:
+        except RemoteError as e:
+
+            self._info("Error: {}".format(str(e)))
             # For now assume that means the file doesn't exist.
             # TODO: Do proper parsing of the error
             if not self.io.exists(dataset_tree_version_file.parent):
@@ -530,7 +532,8 @@ class RIARemote(SpecialRemote):
         # 2. check (annex) object tree version
         try:
             remote_object_tree_version = self.io.read_file(object_tree_version_file)
-        except RemoteError:
+        except RemoteError as e:
+            self._info("Error: {}".format(str(e)))
             # For now assume that means the file doesn't exist.
             # TODO: Do proper parsing of the error
             if not self.io.exists(object_tree_version_file.parent):
