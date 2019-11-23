@@ -15,47 +15,47 @@ lgr = logging.getLogger('ria_remote')
 # - make archive check optional
 
 
-def _get_gitcfg(gitdir, key, cfgargs=None):
-    cmd = [
-        'git',
-        '--git-dir', gitdir,
-        'config',
-    ]
-    if cfgargs:
-        cmd += cfgargs
-    cmd += ['--get', key]
-    try:
-        return subprocess.check_output(
-            cmd,
-            # yield text
-            universal_newlines=True).strip()
-    except Exception:
-        lgr.debug(
-            "Failed to obtain config '%s' at %s",
-            key, gitdir,
-        )
-        return None
-
-
-def _get_datalad_id(gitdir):
-    """Attempt to determine a DataLad dataset ID for a given repo
-
-    Returns
-    -------
-    str or None
-      None in case no ID was found
-    """
-    dsid = _get_gitcfg(
-        gitdir, 'datalad.dataset.id', ['--blob', ':.datalad/config']
-    )
-    if dsid is None:
-        lgr.debug(
-            "Cannot determine a DataLad ID for repository: %s",
-            gitdir,
-        )
-    else:
-        dsid = dsid.strip()
-    return dsid
+# def _get_gitcfg(gitdir, key, cfgargs=None):
+#     cmd = [
+#         'git',
+#         '--git-dir', gitdir,
+#         'config',
+#     ]
+#     if cfgargs:
+#         cmd += cfgargs
+#     cmd += ['--get', key]
+#     try:
+#         return subprocess.check_output(
+#             cmd,
+#             # yield text
+#             universal_newlines=True).strip()
+#     except Exception:
+#         lgr.debug(
+#             "Failed to obtain config '%s' at %s",
+#             key, gitdir,
+#         )
+#         return None
+#
+#
+# def _get_datalad_id(gitdir):
+#     """Attempt to determine a DataLad dataset ID for a given repo
+#
+#     Returns
+#     -------
+#     str or None
+#       None in case no ID was found
+#     """
+#     dsid = _get_gitcfg(
+#         gitdir, 'datalad.dataset.id', ['--blob', ':.datalad/config']
+#     )
+#     if dsid is None:
+#         lgr.debug(
+#             "Cannot determine a DataLad ID for repository: %s",
+#             gitdir,
+#         )
+#     else:
+#         dsid = dsid.strip()
+#     return dsid
 
 
 class RemoteCommandFailedError(Exception):
@@ -545,19 +545,27 @@ class RIARemote(SpecialRemote):
         self.remote_obj_dir = None
 
     def _load_cfg(self, gitdir, name):
-        self.storage_host = _get_gitcfg(
-            gitdir, 'annex.ria-remote.{}.ssh-host'.format(name))
-        objtree_base_path = _get_gitcfg(
-            gitdir, 'annex.ria-remote.{}.base-path'.format(name))
+
+        from datalad.distribution.dataset import Dataset
+        from datalad.config import ConfigManager
+
+        # Note: keep import as cheap as possible. We don't need an Annex/Git-Repo to read the config. So,
+        # be carefull to not instantiate such. Plain Dataset class is cheap and sufficient (not from datalad.api with a
+        # ton of bound stuff!)
+        # Just the right ConfigManager instance. dataset parameter of its __init__ requires nothing than a .path
+        # attribute to query.
+        self.cfg = ConfigManager(Dataset(Path(gitdir).parent))
+
+        self.storage_host = self.cfg.get('annex.ria-remote.{}.ssh-host'.format(name))
+        objtree_base_path = self.cfg.get('annex.ria-remote.{}.base-path'.format(name))
         self.objtree_base_path = objtree_base_path.strip() \
             if objtree_base_path else objtree_base_path
         # Whether or not to force writing to the remote. Currently used to overrule write protection due to layout
         # version mismatch.
-        self.force_write = _get_gitcfg(
-            gitdir, 'annex.ria-remote.{}.force-write'.format(name))
+        self.force_write = self.cfg.get('annex.ria-remote.{}.force-write'.format(name))
 
         # whether to ignore config flags set at the remote end
-        self.ignore_remote_config = _get_gitcfg(gitdir, 'annex.ria-remote.{}.ignore-remote-config'.format(name))
+        self.ignore_remote_config = self.cfg.get('annex.ria-remote.{}.ignore-remote-config'.format(name))
 
     def _verify_config(self, gitdir, fail_noid=True):
         # try loading all needed info from git config
@@ -614,7 +622,7 @@ class RIARemote(SpecialRemote):
         gitdir = self.annex.getgitdir()
         self._verify_config(gitdir, fail_noid=False)
         if not self.archive_id:
-            self.archive_id = _get_datalad_id(gitdir)
+            self.archive_id = self.cfg.get('datalad.dataset.id')
             if not self.archive_id:
                 # fall back on the UUID for the annex remote
                 self.archive_id = self.annex.getuuid()
