@@ -88,6 +88,9 @@ class IOBase(object):
     def exists(self, path):
         raise NotImplementedError
 
+    def is_empty_dir(self, path):
+        raise NotImplementedError
+
     def get_from_archive(self, archive, src, dst):
         """Get a file from an archive
 
@@ -182,6 +185,9 @@ class LocalIO(IOBase):
 
     def exists(self, path):
         return path.exists()
+
+    def is_empty_dir(self, path):
+        return path.is_dir() and not [f for f in path.iterdir()]
 
     def in_archive(self, archive_path, file_path):
         if not archive_path.exists():
@@ -405,6 +411,13 @@ class SSHRemoteIO(IOBase):
     def exists(self, path):
         try:
             self._run('test -e {}'.format(sh_quote(str(path))), check=True)
+            return True
+        except RemoteCommandFailedError:
+            return False
+
+    def is_empty_dir(self, path):
+        try:
+            self._run('test -z $(ls -A {path})'.format(path=path), check=True)
             return True
         except RemoteCommandFailedError:
             return False
@@ -687,13 +700,14 @@ class RIARemote(SpecialRemote):
 
         except (RemoteError, FileNotFoundError):  # depends on whether self.io is local or ssh
             # assume file doesn't exist
-            # TODO: Is there a possibility RemoteError has a different reason and should be handled differently?
+            # TODO: Is there a possibility RemoteError has a different reason _and_ should be handled differently?
             #       Don't think so ATM
-            if not self.io.exists(dataset_tree_version_file.parent):
+            if not self.io.exists(dataset_tree_version_file.parent) or \
+                    self.io.is_empty_dir(dataset_tree_version_file.parent):
                 # we are first, just put our stamp on it
                 # ensure we have a store and simultaneously ensure the error log subdir
                 self.io.mkdir(dataset_tree_version_file.parent / 'error_logs')
-
+                # write version file
                 self.io.write_file(dataset_tree_version_file, self.dataset_tree_version + '\n')
             else:
                 # directory is there, but no version file. We don't know what that is. Treat the same way as if there
@@ -710,7 +724,8 @@ class RIARemote(SpecialRemote):
                            "git-annex-ria-remote.".format(self.remote_object_tree_version, self.known_versions_objt))
                 self._set_read_only(read_only_msg)
         except (RemoteError, FileNotFoundError):
-            if not self.io.exists(object_tree_version_file.parent):
+            if not self.io.exists(object_tree_version_file.parent) or \
+                    self.io.is_empty_dir(object_tree_version_file.parent):
                 # we are first, just put our stamp on it
                 # ensure we have a ds dir and simultaneously ensure the archives subdir
                 self.io.mkdir(object_tree_version_file.parent / 'archives')
@@ -887,3 +902,6 @@ class RIARemote(SpecialRemote):
         key_path = Path(key_dir) / key / key
         archive_path = self.remote_archive_dir / 'archive.7z'
         return self.remote_obj_dir, archive_path, key_path
+
+
+# TODO: static routines to create store/dataset
